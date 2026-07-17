@@ -1,0 +1,106 @@
+{
+  "Comment": "Iterates MigrateDataFunction until no more data remains",
+  "StartAt": "ProcessItems",
+  "States": {
+    "ProcessItems": {
+      "Type": "Map",
+      "ItemReader": {
+        "Resource": "arn:aws:states:::s3:getObject",
+        "ReaderConfig": {
+          "InputType": "JSONL"
+        },
+        "Parameters": {
+          "Bucket.$": "$.s3_bucket",
+          "Key.$": "$.s3_key"
+        }
+      },
+      "MaxConcurrency": 1,
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "DISTRIBUTED",
+          "ExecutionType": "STANDARD"
+        },
+        "StartAt": "MigrateData",
+        "States": {
+          "MigrateData": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${MigrateDataFunctionArn}",
+              "Payload": {
+                "in.$": "$",
+                "state_context": {},
+                "execution": {},
+                "page_token": null
+              }
+            },
+            "OutputPath": "$.Payload",
+            "Next": "CheckExecutionStatus"
+          },
+          "ContinueMigrateData": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${MigrateDataFunctionArn}",
+              "Payload": {
+                "in.$": "$.in",
+                "state_context.$": "$.state_context",
+                "execution.$": "$.execution",
+                "page_token.$": "$.page_token"
+              }
+            },
+            "OutputPath": "$.Payload",
+            "Next": "CheckExecutionStatus"
+          },
+          "CheckExecutionStatus": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.execution.execution-status",
+                "StringEquals": "continue",
+                "Next": "ContinueMigrateData"
+              },
+              {
+                "Variable": "$.execution.execution-status",
+                "StringEquals": "abort",
+                "Next": "ErrorHandler"
+              },
+              {
+                "Variable": "$.execution.execution-status",
+                "StringEquals": "finished",
+                "Next": "Done"
+              }
+            ],
+            "Default": "ErrorHandler"
+          },
+          "ErrorHandler": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${ErrorHandlerFunctionArn}",
+              "Payload": {
+                "in.$": "$.in",
+                "state_context.$": "$.state_context",
+                "execution.$": "$.execution"
+              }
+            },
+            "OutputPath": "$.Payload",
+            "Next": "Fail"
+          },
+          "Fail": {
+            "Type": "Fail",
+            "Error": "MigrationAborted",
+            "Cause": "Execution status indicated abort"
+          },
+          "Done": {
+            "Type": "Succeed"
+          }
+        }
+      },
+      "Next": "Completed"
+    },
+    "Completed": {
+      "Type": "Succeed"
+    }
+  }
+}

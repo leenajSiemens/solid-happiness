@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Data Migration infrastructure
+Parameters:
+  StackTag:
+    Type: String
+    Default: dev
+    Description: Environment tag used to namespace resources
+Resources:
+  ReadDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: data-migration-read-data-${StackTag}
+      Handler: app.handler
+      Runtime: python3.12
+      CodeUri: s3://octopusdeploysim/data-migration/4138903e5726f89f01834c238febfc83
+      Timeout: 600
+      MemorySize: 256
+  ErrorHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: data-migration-error-handler-${StackTag}
+      Handler: app.handler
+      Runtime: python3.12
+      CodeUri: s3://octopusdeploysim/data-migration/4e3ca658c361712e98f876453ecb18d2
+      Timeout: 300
+      MemorySize: 256
+  DataMigrationStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name:
+        Fn::Sub: data-migration-${StackTag}
+      DefinitionUri: s3://octopusdeploysim/data-migration/test-2/statemachine/data_migration.asl.json
+      DefinitionSubstitutions:
+        MigrateDataFunctionArn:
+          Fn::GetAtt:
+          - ReadDataFunction
+          - Arn
+        ErrorHandlerFunctionArn:
+          Fn::GetAtt:
+          - ErrorHandlerFunction
+          - Arn
+      Policies:
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: ReadDataFunction
+      - LambdaInvokePolicy:
+          FunctionName:
+            Ref: ErrorHandlerFunction
+      - S3ReadPolicy:
+          BucketName: '*'
+      - Statement:
+        - Effect: Allow
+          Action:
+          - states:StartExecution
+          - states:DescribeExecution
+          - states:StopExecution
+          Resource: '*'
+      Tracing:
+        Enabled: true
+Outputs:
+  ReadDataFunctionArn:
+    Description: ARN of the ReadData Lambda function
+    Value:
+      Fn::GetAtt:
+      - ReadDataFunction
+      - Arn
+  StateMachineArn:
+    Description: ARN of the Data Migration Step Function
+    Value:
+      Ref: DataMigrationStateMachine
